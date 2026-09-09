@@ -1,0 +1,109 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME   = "taskflow-api"
+        IMAGE_TAG    = "${env.BUILD_NUMBER}"
+        DOCKERHUB_CREDS = credentials('dockerhub-creds')   // configure in Jenkins > Credentials
+        SONAR_TOKEN  = credentials('sonarqube-token')
+        KUBECONFIG_CREDS = credentials('kubeconfig-file')
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                dir('app') {
+                    sh '''
+                        python3 -m venv venv
+                        . venv/bin/activate
+                        pip install -r requirements.txt
+                        pytest tests/ --junitxml=test-results.xml
+                    '''
+                }
+            }
+            post {
+                always {
+                    junit 'app/test-results.xml'
+                }
+            }
+        }
+
+        stage('Static Code Analysis - SonarQube') {
+            steps {
+                withSonarQubeEnv('sonarqube-server') {
+                    sh '''
+                        sonar-scanner \
+                          -Dsonar.projectKey=taskflow-api \
+                          -Dsonar.sources=app \
+                          -Dsonar.python.version=3.12 \
+                          -Dsonar.login=$SONAR_TOKEN
+                    '''
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
+            }
+        }
+
+        stage('Container Vulnerability Scan - Trivy') {
+            steps {
+                // Fail the build on HIGH/CRITICAL vulnerabilities
+                sh "trivy image --severity HIGH,CRITICAL --exit-code 1 ${IMAGE_NAME}:${IMAGE_TAG}"
+            }
+        }
+
+        stage('Push Image') {
+            steps {
+                sh '''
+                    echo "$DOCKERHUB_CREDS_PSW" | docker login -u "$DOCKERHUB_CREDS_USR" --password-stdin
+                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} $DOCKERHUB_CREDS_USR/${IMAGE_NAME}:${IMAGE_TAG}
+                    docker push $DOCKERHUB_CREDS_USR/${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                withKubeConfig([credentialsId: 'kubeconfig-file']) {
+                    sh '''
+                        sed -i "s|IMAGE_PLACEHOLDER|$DOCKERHUB_CREDS_USR/${IMAGE_NAME}:${IMAGE_TAG}|g" k8s/deployment.yaml
+                        kubectl apply -f k8s/configmap.yaml
+                        kubectl apply -f k8s/deployment.yaml
+                        kubectl apply -f k8s/service.yaml
+                        kubectl rollout status deployment/taskflow-api --timeout=120s
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline succeeded: ${IMAGE_NAME}:${IMAGE_TAG} deployed."
+        }
+        failure {
+            echo "Pipeline failed - check the stage logs above."
+        }
+        always {
+            sh "docker image prune -f || true"
+        }
+    }
+}

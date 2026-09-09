@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: taskflow-config
+  labels:
+    app: taskflow-api
+data:
+  FLASK_ENV: "production"
+  LOG_LEVEL: "info"
