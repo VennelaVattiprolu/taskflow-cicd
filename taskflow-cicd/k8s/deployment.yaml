@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: taskflow-api
-          image: IMAGE_PLACEHOLDER   # replaced by the Jenkins pipeline at deploy time
+          image: vennelavattiprolu/taskflow-api:local
           ports:
             - containerPort: 5000
           envFrom:
