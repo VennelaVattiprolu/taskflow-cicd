@@ -8,6 +8,13 @@ This repo is the working implementation behind the "Independent DevOps
 Contributor" project on my resume: a business web app deployed through a
 fully automated, secure delivery pipeline, eliminating manual release steps.
 
+## Proof it runs
+
+Deployed and verified on a local Kubernetes cluster:
+
+![Kubernetes pods running](docs/k8s-pods-running.png)
+
+
 ## Architecture
 
 ```
